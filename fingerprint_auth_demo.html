@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>指紋認証デモ</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;font-family:Arial,"Noto Sans JP",sans-serif;background:linear-gradient(135deg,#111827,#1e3a8a);display:grid;place-items:center;color:#fff}
+.card{width:min(92vw,430px);background:rgba(255,255,255,.1);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.2);border-radius:24px;padding:32px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.icon{font-size:70px;margin:5px 0 12px}
+h1{margin:0 0 8px;font-size:28px}
+p{color:#dbeafe;line-height:1.6}
+button{width:100%;border:0;border-radius:14px;padding:15px;margin-top:12px;font-size:16px;font-weight:bold;cursor:pointer;background:#fff;color:#1e3a8a}
+button:hover{opacity:.9}
+button:disabled{opacity:.5;cursor:not-allowed}
+#status{margin-top:18px;min-height:50px;padding:12px;border-radius:12px;background:rgba(0,0,0,.2);font-size:14px;white-space:pre-wrap}
+.small{font-size:12px;color:#bfdbfe;margin-top:18px}
+.success{color:#86efac}
+.error{color:#fca5a5}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🖐️</div>
+  <h1>指紋認証ログイン</h1>
+  <p>この端末の指紋・顔・PINなどの<br>パスキー認証を使ってログインします。</p>
+
+  <button id="register">① この端末を登録</button>
+  <button id="login">② 指紋でログイン</button>
+
+  <div id="status">準備完了</div>
+  <div class="small">※ 実際の認証では端末側の生体認証画面が表示されます。</div>
+</div>
+
+<script>
+const status = document.getElementById("status");
+const registerBtn = document.getElementById("register");
+const loginBtn = document.getElementById("login");
+
+function msg(text, type="") {
+  status.textContent = text;
+  status.className = type;
+}
+
+function randomBytes(n=32) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return a;
+}
+
+function b64url(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+function savedId() {
+  const x = localStorage.getItem("webauthnCredentialId");
+  return x ? Uint8Array.from(atob(x.replace(/-/g,"+").replace(/_/g,"/") + "=="), c=>c.charCodeAt(0)) : null;
+}
+
+function saveId(id) {
+  localStorage.setItem("webauthnCredentialId", b64url(id));
+}
+
+async function supported() {
+  if (!window.isSecureContext) {
+    msg("このページは安全な接続（HTTPS）で開いてください。\nlocalhostでも動作します。","error");
+    return false;
+  }
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    msg("このブラウザはWebAuthnに対応していません。","error");
+    return false;
+  }
+  return true;
+}
+
+registerBtn.onclick = async () => {
+  if (!await supported()) return;
+
+  try {
+    msg("端末の指紋・顔・PIN認証を待っています…");
+    const userId = randomBytes(16);
+
+    const credential = await navigator.credentials.create({
+      publicKey: {
+        challenge: randomBytes(32),
+        rp: {
+          name: "指紋認証デモサイト",
+          id: location.hostname
+        },
+        user: {
+          id: userId,
+          name: "demo-user",
+          displayName: "デモユーザー"
+        },
+        pubKeyCredParams: [
+          {type:"public-key", alg:-7},
+          {type:"public-key", alg:-257}
+        ],
+        authenticatorSelection: {
+          residentKey: "preferred",
+          userVerification: "required"
+        },
+        timeout: 60000,
+        attestation: "none"
+      }
+    });
+
+    if (!credential) throw new Error("認証情報を作成できませんでした。");
+    saveId(credential.rawId);
+    msg("登録成功！\n次回から「指紋でログイン」を押せます。","success");
+  } catch(e) {
+    msg("登録できませんでした。\n" + (e.message || e),"error");
+  }
+};
+
+loginBtn.onclick = async () => {
+  if (!await supported()) return;
+
+  const id = savedId();
+  if (!id) {
+    msg("まだ端末が登録されていません。\n先に「この端末を登録」を押してください。","error");
+    return;
+  }
+
+  try {
+    msg("指紋・顔・PINなどで認証してください…");
+
+    const credential = await navigator.credentials.get({
+      publicKey: {
+        challenge: randomBytes(32),
+        allowCredentials: [{
+          type: "public-key",
+          id: id
+        }],
+        userVerification: "required",
+        timeout: 60000
+      }
+    });
+
+    if (!credential) throw new Error("認証できませんでした。");
+    msg("✅ 認証成功！\nログインしました。","success");
+  } catch(e) {
+    msg("認証に失敗しました。\n" + (e.message || e),"error");
+  }
+};
+
+if (!window.isSecureContext) {
+  msg("HTTPSまたはlocalhostで開くと実際の認証を試せます。","error");
+}
+</script>
+</body>
+</html>
