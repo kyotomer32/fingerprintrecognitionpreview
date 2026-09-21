@@ -1,155 +1,179 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>指紋認証デモ</title>
+<title>指紋認証ログイン v2.0</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;font-family:Arial,"Noto Sans JP",sans-serif;background:linear-gradient(135deg,#111827,#1e3a8a);display:grid;place-items:center;color:#fff}
-.card{width:min(92vw,430px);background:rgba(255,255,255,.1);backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.2);border-radius:24px;padding:32px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.35)}
-.icon{font-size:70px;margin:5px 0 12px}
-h1{margin:0 0 8px;font-size:28px}
-p{color:#dbeafe;line-height:1.6}
-button{width:100%;border:0;border-radius:14px;padding:15px;margin-top:12px;font-size:16px;font-weight:bold;cursor:pointer;background:#fff;color:#1e3a8a}
-button:hover{opacity:.9}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif;background:linear-gradient(135deg,#0f172a,#2563eb);color:#fff}
+.card{width:min(92vw,460px);padding:32px;border-radius:24px;background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.22);box-shadow:0 20px 70px rgba(0,0,0,.35);backdrop-filter:blur(18px)}
+.version{font-size:12px;color:#bfdbfe;margin-bottom:12px;text-align:right}
+.icon{font-size:64px;text-align:center}
+h1{text-align:center;margin:8px 0;font-size:28px}
+.desc{text-align:center;color:#dbeafe;line-height:1.6}
+button{width:100%;padding:15px;margin-top:12px;border:0;border-radius:14px;font-size:16px;font-weight:700;cursor:pointer}
+#register{background:#fff;color:#1d4ed8}
+#login{background:#bfdbfe;color:#172554}
+#reset{background:rgba(255,255,255,.12);color:#fff;font-size:13px}
 button:disabled{opacity:.5;cursor:not-allowed}
-#status{margin-top:18px;min-height:50px;padding:12px;border-radius:12px;background:rgba(0,0,0,.2);font-size:14px;white-space:pre-wrap}
-.small{font-size:12px;color:#bfdbfe;margin-top:18px}
-.success{color:#86efac}
-.error{color:#fca5a5}
+#status{margin-top:18px;padding:14px;border-radius:14px;background:rgba(0,0,0,.2);min-height:54px;white-space:pre-wrap;line-height:1.5;font-size:14px}
+.ok{color:#86efac}.err{color:#fecaca}
+.note{font-size:12px;color:#bfdbfe;text-align:center;margin-top:15px}
 </style>
 </head>
 <body>
-<div class="card">
+<main class="card">
+  <div class="version">Version 2.0 — WebAuthn</div>
   <div class="icon">🖐️</div>
   <h1>指紋認証ログイン</h1>
-  <p>この端末の指紋・顔・PINなどの<br>パスキー認証を使ってログインします。</p>
+  <p class="desc">この端末の指紋・顔・PINなどを使って<br>安全にログインできます。</p>
 
-  <button id="register">① この端末を登録</button>
+  <button id="register">① 初回登録</button>
   <button id="login">② 指紋でログイン</button>
+  <button id="reset">登録情報をリセット</button>
 
   <div id="status">準備完了</div>
-  <div class="small">※ 実際の認証では端末側の生体認証画面が表示されます。</div>
-</div>
+  <div class="note">GitHub PagesなどのHTTPS環境で使用してください。</div>
+</main>
 
 <script>
-const status = document.getElementById("status");
-const registerBtn = document.getElementById("register");
-const loginBtn = document.getElementById("login");
+const $=id=>document.getElementById(id);
+const status=$("status");
+const register=$("register");
+const login=$("login");
+const reset=$("reset");
 
-function msg(text, type="") {
-  status.textContent = text;
-  status.className = type;
+function show(text,type=""){
+  status.textContent=text;
+  status.className=type;
 }
-
-function randomBytes(n=32) {
-  const a = new Uint8Array(n);
+function bytes(n=32){
+  const a=new Uint8Array(n);
   crypto.getRandomValues(a);
   return a;
 }
-
-function b64url(buf) {
-  const bytes = new Uint8Array(buf);
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
+function b64url(buffer){
+  const a=new Uint8Array(buffer);
+  let s="";
+  for(const b of a)s+=String.fromCharCode(b);
   return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 }
-
-function savedId() {
-  const x = localStorage.getItem("webauthnCredentialId");
-  return x ? Uint8Array.from(atob(x.replace(/-/g,"+").replace(/_/g,"/") + "=="), c=>c.charCodeAt(0)) : null;
+function fromB64url(s){
+  s=s.replace(/-/g,"+").replace(/_/g,"/");
+  while(s.length%4)s+="=";
+  const bin=atob(s), a=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)a[i]=bin.charCodeAt(i);
+  return a;
 }
-
-function saveId(id) {
-  localStorage.setItem("webauthnCredentialId", b64url(id));
-}
-
-async function supported() {
-  if (!window.isSecureContext) {
-    msg("このページは安全な接続（HTTPS）で開いてください。\nlocalhostでも動作します。","error");
+function isReady(){
+  if(!window.isSecureContext){
+    show("❌ HTTPSで開いてください。\nGitHub PagesのURLならOKです。","err");
     return false;
   }
-  if (!window.PublicKeyCredential || !navigator.credentials) {
-    msg("このブラウザはWebAuthnに対応していません。","error");
+  if(!window.PublicKeyCredential||!navigator.credentials){
+    show("❌ このブラウザはWebAuthnに対応していません。","err");
     return false;
   }
   return true;
 }
 
-registerBtn.onclick = async () => {
-  if (!await supported()) return;
+register.onclick=async()=>{
+  if(!isReady())return;
 
-  try {
-    msg("端末の指紋・顔・PIN認証を待っています…");
-    const userId = randomBytes(16);
+  try{
+    register.disabled=true;
+    show("認証画面を開いています…\n指紋・顔・PINなどで本人確認してください。");
 
-    const credential = await navigator.credentials.create({
-      publicKey: {
-        challenge: randomBytes(32),
-        rp: {
-          name: "指紋認証デモサイト",
-          id: location.hostname
+    const credential=await navigator.credentials.create({
+      publicKey:{
+        challenge:bytes(32),
+        rp:{
+          name:"指紋認証デモサイト"
         },
-        user: {
-          id: userId,
-          name: "demo-user",
-          displayName: "デモユーザー"
+        user:{
+          id:bytes(16),
+          name:"site-user",
+          displayName:"サイトユーザー"
         },
-        pubKeyCredParams: [
-          {type:"public-key", alg:-7},
-          {type:"public-key", alg:-257}
+        pubKeyCredParams:[
+          {type:"public-key",alg:-7},
+          {type:"public-key",alg:-257}
         ],
-        authenticatorSelection: {
-          residentKey: "preferred",
-          userVerification: "required"
+        authenticatorSelection:{
+          residentKey:"required",
+          requireResidentKey:true,
+          userVerification:"required"
         },
-        timeout: 60000,
-        attestation: "none"
+        timeout:60000,
+        attestation:"none"
       }
     });
 
-    if (!credential) throw new Error("認証情報を作成できませんでした。");
-    saveId(credential.rawId);
-    msg("登録成功！\n次回から「指紋でログイン」を押せます。","success");
-  } catch(e) {
-    msg("登録できませんでした。\n" + (e.message || e),"error");
+    if(!credential)throw new Error("認証情報を作成できませんでした。");
+
+    localStorage.setItem(
+      "credentialId",
+      b64url(credential.rawId)
+    );
+
+    show("✅ 初回登録成功！\n\nこの端末が登録されました。\n「② 指紋でログイン」からログインできます。","ok");
+  }catch(e){
+    let m=e.message||String(e);
+    if(e.name==="NotAllowedError")
+      m="認証がキャンセルされたか、端末側で認証できませんでした。";
+    else if(e.name==="InvalidStateError")
+      m="この端末にはすでに登録済みの認証情報がある可能性があります。";
+    show("❌ 初回登録できませんでした。\n\n"+m,"err");
+  }finally{
+    register.disabled=false;
   }
 };
 
-loginBtn.onclick = async () => {
-  if (!await supported()) return;
+login.onclick=async()=>{
+  if(!isReady())return;
 
-  const id = savedId();
-  if (!id) {
-    msg("まだ端末が登録されていません。\n先に「この端末を登録」を押してください。","error");
-    return;
-  }
+  const saved=localStorage.getItem("credentialId");
 
-  try {
-    msg("指紋・顔・PINなどで認証してください…");
+  try{
+    show("認証してください…\n指紋・顔・PINなどで本人確認します。");
 
-    const credential = await navigator.credentials.get({
-      publicKey: {
-        challenge: randomBytes(32),
-        allowCredentials: [{
-          type: "public-key",
-          id: id
-        }],
-        userVerification: "required",
-        timeout: 60000
+    const options={
+      publicKey:{
+        challenge:bytes(32),
+        userVerification:"required",
+        rpId:location.hostname,
+        timeout:60000
       }
-    });
+    };
 
-    if (!credential) throw new Error("認証できませんでした。");
-    msg("✅ 認証成功！\nログインしました。","success");
-  } catch(e) {
-    msg("認証に失敗しました。\n" + (e.message || e),"error");
+    if(saved){
+      options.publicKey.allowCredentials=[{
+        type:"public-key",
+        id:fromB64url(saved)
+      }];
+    }
+
+    const credential=await navigator.credentials.get(options);
+
+    if(!credential)throw new Error("認証できませんでした。");
+
+    show("🎉 ログイン成功！\n\n本人確認が完了しました。","ok");
+  }catch(e){
+    let m=e.message||String(e);
+    if(e.name==="NotAllowedError")
+      m="認証がキャンセルされたか、認証に失敗しました。";
+    show("❌ ログインできませんでした。\n\n"+m,"err");
   }
 };
 
-if (!window.isSecureContext) {
-  msg("HTTPSまたはlocalhostで開くと実際の認証を試せます。","error");
+reset.onclick=()=>{
+  localStorage.removeItem("credentialId");
+  show("登録情報をこのブラウザから削除しました。\nもう一度「① 初回登録」できます。");
+};
+
+if(!window.isSecureContext){
+  show("⚠️ 現在は安全な接続ではありません。\nGitHub PagesのHTTPS URLで開いてください。","err");
 }
 </script>
 </body>
